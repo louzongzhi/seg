@@ -2,6 +2,7 @@
 import argparse  # 命令行参数解析
 import logging  # 日志记录
 import os  # 操作系统接口
+import shutil	# 文件操作
 
 # 导入PyTorch相关库
 import torch  # PyTorch库
@@ -39,6 +40,13 @@ dir_mask_test = Path('./NEU_Seg/annotations/test/')  # 测试集掩码路径
 dir_checkpoint = Path('./checkpoints/')  # 检查点根目录
 dir_checkpoint_history = dir_checkpoint / 'history'  # 历史检查点保存路径
 dir_checkpoint_best = dir_checkpoint / 'best'  # 最佳检查点保存路径
+
+if not dir_checkpoint.exists():
+    dir_checkpoint.mkdir(parents=True, exist_ok=True)
+if not dir_checkpoint_history.exists():
+    dir_checkpoint_history.mkdir(parents=True, exist_ok=True)
+if not dir_checkpoint_best.exists():
+    dir_checkpoint_best.mkdir(parents=True, exist_ok=True)
 
 
 def train_model(
@@ -150,37 +158,38 @@ def train_model(
                 })
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
-                # Evaluation round
-                division_step = (len(train_dataset) // (5 * batch_size))
-                if division_step > 0:
-                    if global_step % division_step == 0:
-                        histograms = {}
-                        for tag, value in model.named_parameters():
-                            tag = tag.replace('/', '.')
-                            if not (torch.isinf(value) | torch.isnan(value)).any():
-                                histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
-                            if not (torch.isinf(value.grad) | torch.isnan(value.grad)).any():
-                                histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
+        # Evaluation round after each epoch
+        model.eval()
+        with torch.no_grad():
+            metrics = evaluate(model, val_loader, device, amp)
+            val_score = metrics['MIoU']
+            scheduler.step(val_score)  # Assuming MIoU is used to adjust the learning rate
 
-                        val_score = evaluate(model, val_loader, device, amp)
-                        scheduler.step(val_score)
+            logging.info('Validation Metrics:')
+            logging.info('PA: {:.4f}, CPA: {:.4f}, MPA: {:.4f}, IoU_0: {:.4f}, IoU_1: {:.4f}, IoU_2: {:.4f}, IoU_3: {:.4f}, MIoU: {:.4f}'.format(
+                metrics['PA'], metrics['CPA'], metrics['MPA'], metrics['IoU_0'], metrics['IoU_1'], metrics['IoU_2'], metrics['IoU_3'], metrics['MIoU']))
+            logging.info('Dice: {:.4f}, Precision: {:.4f}, Recall: {:.4f}, F1: {:.4f}'.format(
+                metrics['Dice'], metrics['Precision'].mean(), metrics['Recall'].mean(), metrics['F1'].mean()))
 
-                        logging.info('Validation Dice score: {}'.format(val_score))
-                        try:
-                            experiment.log({
-                                'learning rate': optimizer.param_groups[0]['lr'],
-                                'validation Dice': val_score,
-                                'images': wandb.Image(images[0].cpu()),
-                                'masks': {
-                                    'true': wandb.Image(true_masks[0].float().cpu()),
-                                    'pred': wandb.Image(masks_pred.argmax(dim=1)[0].float().cpu()),
-                                },
-                                'step': global_step,
-                                'epoch': epoch,
-                                **histograms
-                            })
-                        except:
-                            pass
+            try:
+                experiment.log({
+                    'learning rate': optimizer.param_groups[0]['lr'],
+                    'validation PA': metrics['PA'],
+                    'validation CPA': metrics['CPA'],
+                    'validation MPA': metrics['MPA'],
+                    'validation IoU_0': metrics['IoU_0'],
+                    'validation IoU_1': metrics['IoU_1'],
+                    'validation IoU_2': metrics['IoU_2'],
+                    'validation IoU_3': metrics['IoU_3'],
+                    'validation MIoU': metrics['MIoU'],
+                    'validation Dice': metrics['Dice'],
+                    'validation Precision': metrics['Precision'].mean(),
+                    'validation Recall': metrics['Recall'].mean(),
+                    'validation F1': metrics['F1'].mean(),
+                    'epoch': epoch,
+                })
+            except:
+                pass
 
         if save_checkpoint:
             if val_score > best_score:
@@ -191,14 +200,20 @@ def train_model(
                 torch.save(model.state_dict(), str(dir_checkpoint_history / f'checkpoint_epoch{epoch}.pth'))
                 logging.info(f'Checkpoint {epoch} saved!')
 
+    for root, dirs, files in os.walk(os.getcwd()):
+        for dir in dirs:
+            if dir == '__pycache__':
+                cache_dir_path = os.path.join(root, dir)
+                shutil.rmtree(cache_dir_path)
+
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', '-e', metavar='E', type=int, default=5, help='Number of epochs')
     parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=1, help='Batch size')
-    parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=1e-5, help='Learning rate', dest='lr')
+    parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=1e-4, help='Learning rate', dest='lr')
     parser.add_argument('--load', '-f', type=str, default=False, help='Load model from a .pth file')
-    parser.add_argument('--scale', '-s', type=float, default=0.5, help='Downscaling factor of the images')
+    parser.add_argument('--scale', '-s', type=float, default=1, help='Downscaling factor of the images')
     parser.add_argument('--amp', action='store_true', default=False, help='Use mixed precision')
 
     return parser.parse_args()
