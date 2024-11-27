@@ -2,8 +2,6 @@
 import argparse  # 命令行参数解析
 import logging  # 日志记录
 import os  # 操作系统接口
-import random  # 随机数生成
-import sys  # 系统相关的参数和函数
 
 # 导入PyTorch相关库
 import torch  # PyTorch库
@@ -17,7 +15,7 @@ from pathlib import Path  # 路径操作
 
 # 导入PyTorch数据加载和优化器
 from torch import optim  # 优化器
-from torch.utils.data import DataLoader, random_split  # 数据加载器和数据集分割
+from torch.utils.data import DataLoader  # 数据加载器
 
 # 导入进度条显示库
 from tqdm import tqdm  # 进度条
@@ -27,7 +25,7 @@ import wandb  # Wandb实验跟踪
 
 # 导入自定义模块
 from evaluate import evaluate  # 模型评估
-from models import UNet  # U-Net模型定义
+from models import load_model  # 加载模型
 from utils.data_loading import BasicDataset, CarvanaDataset  # 数据加载
 from utils.dice_score import dice_loss  # Dice损失函数
 
@@ -49,7 +47,6 @@ def train_model(
     epochs: int = 5,
     batch_size: int = 1,
     learning_rate: float = 1e-5,
-    val_percent: float = 0.1,
     save_checkpoint: bool = True,
     img_scale: float = 0.5,
     amp: bool = False,
@@ -81,8 +78,7 @@ def train_model(
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
     experiment.config.update(
-        dict(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate,
-             val_percent=val_percent, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
+        dict(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
     )
 
     logging.info(
@@ -197,18 +193,13 @@ def train_model(
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
+    parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', '-e', metavar='E', type=int, default=5, help='Number of epochs')
     parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=1, help='Batch size')
-    parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=1e-5,
-                        help='Learning rate', dest='lr')
+    parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=1e-5, help='Learning rate', dest='lr')
     parser.add_argument('--load', '-f', type=str, default=False, help='Load model from a .pth file')
     parser.add_argument('--scale', '-s', type=float, default=0.5, help='Downscaling factor of the images')
-    parser.add_argument('--validation', '-v', dest='val', type=float, default=10.0,
-                        help='Percent of the data that is used as validation (0-100)')
     parser.add_argument('--amp', action='store_true', default=False, help='Use mixed precision')
-    parser.add_argument('--bilinear', action='store_true', default=False, help='Use bilinear upsampling')
-    parser.add_argument('--classes', '-c', type=int, default=2, help='Number of classes')
 
     return parser.parse_args()
 
@@ -220,16 +211,8 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device {device}')
 
-    # Change here to adapt to your data
-    # n_channels=3 for RGB images
-    # n_classes is the number of probabilities you want to get per pixel
-    model = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
+    model = load_model("UNet")
     model = model.to(memory_format=torch.channels_last)
-
-    logging.info(f'Network:\n'
-                 f'\t{model.n_channels} input channels\n'
-                 f'\t{model.n_classes} output channels (classes)\n'
-                 f'\t{"Bilinear" if model.bilinear else "Transposed conv"} upscaling')
 
     if args.load:
         state_dict = torch.load(args.load, map_location=device)
@@ -246,22 +229,12 @@ if __name__ == '__main__':
             learning_rate=args.lr,
             device=device,
             img_scale=args.scale,
-            val_percent=args.val / 100,
             amp=args.amp
         )
     except torch.cuda.OutOfMemoryError:
-        logging.error('Detected OutOfMemoryError! '
-                      'Enabling checkpointing to reduce memory usage, but this slows down training. '
-                      'Consider enabling AMP (--amp) for fast and memory efficient training')
-        torch.cuda.empty_cache()
-        model.use_checkpointing()
-        train_model(
-            model=model,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            learning_rate=args.lr,
-            device=device,
-            img_scale=args.scale,
-            val_percent=args.val / 100,
-            amp=args.amp
+        logging.error(
+            'Detected OutOfMemoryError!'
+            'Enabling checkpointing to reduce memory usage, but this slows down training.'
+            'Consider enabling AMP (--amp) for fast and memory efficient training'
         )
+        torch.cuda.empty_cache()
