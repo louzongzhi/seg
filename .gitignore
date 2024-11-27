@@ -161,41 +161,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# picture files
 *.png
 *.jpg
-*.jpeg
-*.gif
-*.bmp
-*.tiff
-*.tif
-*.svg
-*.webp
-*.ico
-*.psd
-*.ai
-*.eps
-*.pdf
-*.indd
-*.raw
-*.cr2
-*.nef
-*.orf
-*.sr2
-*.arw
-*.dng
-*.heic
-*.heif
-*.rw2
-*.raf
-*.nrw
-*.x3f
-*.dcr
-*.kdc
-*.dng
-*.cr2
-*.nef
-*.orf
-*.sr2
-*.arw
-*.dng
-*.heic
