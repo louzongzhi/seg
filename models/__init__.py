@@ -15,6 +15,6 @@ def load_model(model_name):
     elif model_name == 'self_net':
         return self_net(n_channels=3, n_classes=4)
     elif model_name == 'VMUNet':
-        return VMUNet()
+        return VMUNet(input_channels=3, num_classes=4)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
