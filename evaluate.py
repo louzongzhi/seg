@@ -66,7 +66,8 @@ def evaluate(net, dataloader, device, amp):
     precision = precision_score(mask_true.cpu().numpy().flatten(), mask_pred.cpu().numpy().flatten(), average=None)
     recall = recall_score(mask_true.cpu().numpy().flatten(), mask_pred.cpu().numpy().flatten(), average=None)
     f1 = f1_score(mask_true.cpu().numpy().flatten(), mask_pred.cpu().numpy().flatten(), average=None)
-    mean_iou = np.mean([class_iou[1], class_iou[2], class_iou[3]])
+    # Calculate mean IoU for classes 1 to 3
+    mean_iou_macro = np.mean([class_iou[i] for i in range(1, len(class_iou))])
 
     return {
         'PA': accuracy,
@@ -76,7 +77,7 @@ def evaluate(net, dataloader, device, amp):
         'IoU_1': class_iou[1] if net.n_classes > 1 else 0,
         'IoU_2': class_iou[2] if net.n_classes > 2 else 0,
         'IoU_3': class_iou[3] if net.n_classes > 3 else 0,
-        'MIoU': mean_iou,
+        'MIoU': mean_iou_macro,
         'Dice': dice_score / max(num_val_batches, 1),
         'Precision': precision,
         'Recall': recall,
