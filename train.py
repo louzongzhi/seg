@@ -2,9 +2,10 @@
 import argparse  # 命令行参数解析
 import logging  # 日志记录
 import os  # 操作系统接口
-import shutil	# 文件操作
+import shutil  # 文件操作
 import random  # 随机数生成
 import numpy as np  # 数组操作
+import csv  # CSV文件操作
 
 # 导入PyTorch相关库
 import torch  # PyTorch库
@@ -22,9 +23,6 @@ from torch.utils.data import DataLoader  # 数据加载器
 
 # 导入进度条显示库
 from tqdm import tqdm  # 进度条
-
-# 导入Wandb实验跟踪库
-import wandb  # Wandb实验跟踪
 
 # 导入自定义模块
 from evaluate import evaluate  # 模型评估
@@ -64,7 +62,6 @@ if not dir_checkpoint_history.exists():
 if not dir_checkpoint_best.exists():
     dir_checkpoint_best.mkdir(parents=True, exist_ok=True)
 
-
 def train_model(
     model,
     device,
@@ -99,12 +96,6 @@ def train_model(
     train_loader = DataLoader(train_dataset, shuffle=True, **loader_args)
     val_loader = DataLoader(val_dataset, shuffle=False, drop_last=True, **loader_args)
 
-    # (Initialize logging)
-    experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
-    experiment.config.update(
-        dict(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
-    )
-
     logging.info(
         f'''Starting training:
         Epochs:          {epochs}
@@ -120,8 +111,13 @@ def train_model(
     )
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
-    optimizer = optim.RMSprop(model.parameters(),
-                              lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
+    optimizer = optim.RMSprop(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+        momentum=momentum,
+        foreach=True
+    )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5)  # goal: maximize Dice score
     grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
     criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss()
@@ -129,6 +125,9 @@ def train_model(
 
     # 5. Begin training
     best_score = 0.0
+    with open(str(dir_checkpoint / 'run.csv'), 'w', newline='') as csvfile:  # 'w'模式用于写入新文件
+        writer = csv.writer(csvfile)
+        writer.writerow(['Epoch', 'IoU_0', 'IoU_1', 'IoU_2', 'IoU_3', 'MIoU', 'Dice'])
     for epoch in range(1, epochs + 1):
         model.train()
         epoch_loss = 0
@@ -167,11 +166,6 @@ def train_model(
                 pbar.update(images.shape[0])
                 global_step += 1
                 epoch_loss += loss.item()
-                experiment.log({
-                    'train loss': loss.item(),
-                    'step': global_step,
-                    'epoch': epoch
-                })
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
         # Evaluation round after each epoch
@@ -184,20 +178,9 @@ def train_model(
             logging.info('Validation Metrics:')
             logging.info('IoU_0: {:.4f}, IoU_1: {:.4f}, IoU_2: {:.4f}, IoU_3: {:.4f}, MIoU: {:.4f}, Dice: {:.4f}'.format(
                 metrics['IoU_0'], metrics['IoU_1'], metrics['IoU_2'], metrics['IoU_3'], metrics['MIoU'], metrics['Dice']))
-
-            try:
-                experiment.log({
-                    'learning rate': optimizer.param_groups[0]['lr'],
-                    'validation IoU_0': metrics['IoU_0'],
-                    'validation IoU_1': metrics['IoU_1'],
-                    'validation IoU_2': metrics['IoU_2'],
-                    'validation IoU_3': metrics['IoU_3'],
-                    'validation MIoU': metrics['MIoU'],
-                    'validation Dice': metrics['Dice'],
-                    'epoch': epoch,
-                })
-            except:
-                pass
+            with open(str(dir_checkpoint / 'run.csv'), 'a', newline='') as csvfile:  # 'a'模式用于追加内容
+                writer = csv.writer(csvfile)
+                writer.writerow([epoch] + [metrics[key] for key in ['IoU_0', 'IoU_1', 'IoU_2', 'IoU_3', 'MIoU', 'Dice']])
 
         if save_checkpoint:
             if val_score > best_score:

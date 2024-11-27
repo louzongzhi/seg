@@ -45,14 +45,14 @@ def evaluate(net, dataloader, device, amp):
 
             # Calculate confusion matrix on GPU
             conf_mat = torch.zeros(net.n_classes, net.n_classes, device=device)
-            for t, p in zip(mask_true.view(-1), mask_pred.view(-1)):
+            for t, p in zip(mask_true.reshape(-1), mask_pred.reshape(-1)):
                 conf_mat[t.long(), p.long()] += 1
             conf_matrix_list.append(conf_mat.cpu())  # Move to CPU for averaging
 
     net.train()
 
     # Calculate IoU for each class
-    conf_matrix = torch.mean(torch.stack(conf_matrix_list), dim=0) if conf_matrix_list else torch.zeros(net.n_classes, net.n_classes)
+    conf_matrix = torch.mean(torch.stack(conf_matrix_list, dim=0), dim=0) if conf_matrix_list else torch.zeros(net.n_classes, net.n_classes)
     class_iou = []
     for i in range(net.n_classes):
         intersection = conf_matrix[i, i]
