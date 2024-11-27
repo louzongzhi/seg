@@ -199,12 +199,12 @@ def train_model(
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', '-e', metavar='E', type=int, default=5, help='Number of epochs')
-    parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=16, help='Batch size')
+    parser.add_argument('--epochs', '-e', metavar='E', type=int, default=360, help='Number of epochs')
+    parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=32, help='Batch size')
     parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=1e-4, help='Learning rate', dest='lr')
     parser.add_argument('--load', '-f', type=str, default=False, help='Load model from a .pth file')
     parser.add_argument('--scale', '-s', type=float, default=1, help='Downscaling factor of the images')
-    parser.add_argument('--amp', action='store_true', default=False, help='Use mixed precision')
+    parser.add_argument('--amp', action='store_true', default=True, help='Use mixed precision')
 
     return parser.parse_args()
 
@@ -221,7 +221,6 @@ if __name__ == '__main__':
 
     if args.load:
         state_dict = torch.load(args.load, map_location=device)
-        del state_dict['mask_values']
         model.load_state_dict(state_dict)
         logging.info(f'Model loaded from {args.load}')
 
