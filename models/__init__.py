@@ -1,5 +1,5 @@
-from unet import UNet
-from model import self_net
+from .unet import UNet
+from .model import self_net
 
 __all__ = [
     'UNet',
