@@ -3,6 +3,8 @@ import argparse  # 命令行参数解析
 import logging  # 日志记录
 import os  # 操作系统接口
 import shutil	# 文件操作
+import random  # 随机数生成
+import numpy as np  # 数组操作
 
 # 导入PyTorch相关库
 import torch  # PyTorch库
@@ -29,6 +31,20 @@ from evaluate import evaluate  # 模型评估
 from models import load_model  # 加载模型
 from utils.data_loading import BasicDataset, CarvanaDataset  # 数据加载
 from utils.dice_score import dice_loss  # Dice损失函数
+
+# 设置随机种子
+def set_seed(seed_value=42):
+    random.seed(seed_value)
+    np.random.seed(seed_value)
+    torch.manual_seed(seed_value)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed_value)
+        torch.cuda.manual_seed_all(seed_value)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# 使用函数设置随机种子
+set_seed()
 
 # 设置数据路径
 dir_img_train = Path('./NEU_Seg/images/training/')  # 训练集图像路径
