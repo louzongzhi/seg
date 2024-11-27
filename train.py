@@ -1,58 +1,82 @@
-import argparse
-import logging
-import os
-import random
-import sys
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as transforms
-import torchvision.transforms.functional as TF
-from pathlib import Path
-from torch import optim
-from torch.utils.data import DataLoader, random_split
-from tqdm import tqdm
+# 导入标准库
+import argparse  # 命令行参数解析
+import logging  # 日志记录
+import os  # 操作系统接口
+import random  # 随机数生成
+import sys  # 系统相关的参数和函数
 
-import wandb
-from evaluate import evaluate
-from models import UNet
-from utils.data_loading import BasicDataset, CarvanaDataset
-from utils.dice_score import dice_loss
+# 导入PyTorch相关库
+import torch  # PyTorch库
+import torch.nn as nn  # 神经网络模块
+import torch.nn.functional as F  # 神经网络函数
+from torchvision import transforms  # 图像预处理
+from torchvision.transforms import functional as TF  # 图像预处理函数
 
-dir_img = Path('./data/imgs/')
-dir_mask = Path('./data/masks/')
-dir_checkpoint = Path('./checkpoints/')
+# 导入路径操作库
+from pathlib import Path  # 路径操作
+
+# 导入PyTorch数据加载和优化器
+from torch import optim  # 优化器
+from torch.utils.data import DataLoader, random_split  # 数据加载器和数据集分割
+
+# 导入进度条显示库
+from tqdm import tqdm  # 进度条
+
+# 导入Wandb实验跟踪库
+import wandb  # Wandb实验跟踪
+
+# 导入自定义模块
+from evaluate import evaluate  # 模型评估
+from models import UNet  # U-Net模型定义
+from utils.data_loading import BasicDataset, CarvanaDataset  # 数据加载
+from utils.dice_score import dice_loss  # Dice损失函数
+
+# 设置数据路径
+dir_img_train = Path('./NEU_Seg/images/training/')  # 训练集图像路径
+dir_mask_train = Path('./NEU_Seg/annotations/training/')  # 训练集掩码路径
+dir_img_test = Path('./NEU_Seg/images/test/')  # 测试集图像路径
+dir_mask_test = Path('./NEU_Seg/annotations/test/')  # 测试集掩码路径
+
+# 设置模型检查点保存路径
+dir_checkpoint = Path('./checkpoints/')  # 检查点根目录
+dir_checkpoint_history = dir_checkpoint / 'history'  # 历史检查点保存路径
+dir_checkpoint_best = dir_checkpoint / 'best'  # 最佳检查点保存路径
 
 
 def train_model(
-        model,
-        device,
-        epochs: int = 5,
-        batch_size: int = 1,
-        learning_rate: float = 1e-5,
-        val_percent: float = 0.1,
-        save_checkpoint: bool = True,
-        img_scale: float = 0.5,
-        amp: bool = False,
-        weight_decay: float = 1e-8,
-        momentum: float = 0.999,
-        gradient_clipping: float = 1.0,
+    model,
+    device,
+    epochs: int = 5,
+    batch_size: int = 1,
+    learning_rate: float = 1e-5,
+    val_percent: float = 0.1,
+    save_checkpoint: bool = True,
+    img_scale: float = 0.5,
+    amp: bool = False,
+    weight_decay: float = 1e-8,
+    momentum: float = 0.999,
+    gradient_clipping: float = 1.0,
+    dir_img_train=dir_img_train,
+    dir_mask_train=dir_mask_train,
+    dir_img_test=dir_img_test,
+    dir_mask_test=dir_mask_test,
 ):
-    # 1. Create dataset
+    # 1. Create dataset for training
     try:
-        dataset = CarvanaDataset(dir_img, dir_mask, img_scale)
+        train_dataset = CarvanaDataset(dir_img_train, dir_mask_train, img_scale)
     except (AssertionError, RuntimeError, IndexError):
-        dataset = BasicDataset(dir_img, dir_mask, img_scale)
+        train_dataset = BasicDataset(dir_img_train, dir_mask_train, img_scale)
 
-    # 2. Split into train / validation partitions
-    n_val = int(len(dataset) * val_percent)
-    n_train = len(dataset) - n_val
-    train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
+    # 2. Create dataset for validation
+    try:
+        val_dataset = CarvanaDataset(dir_img_test, dir_mask_test, img_scale)
+    except (AssertionError, RuntimeError, IndexError):
+        val_dataset = BasicDataset(dir_img_test, dir_mask_test, img_scale)
 
     # 3. Create data loaders
     loader_args = dict(batch_size=batch_size, num_workers=os.cpu_count(), pin_memory=True)
-    train_loader = DataLoader(train_set, shuffle=True, **loader_args)
-    val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
+    train_loader = DataLoader(train_dataset, shuffle=True, **loader_args)
+    val_loader = DataLoader(val_dataset, shuffle=False, drop_last=True, **loader_args)
 
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
@@ -61,17 +85,19 @@ def train_model(
              val_percent=val_percent, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
     )
 
-    logging.info(f'''Starting training:
+    logging.info(
+        f'''Starting training:
         Epochs:          {epochs}
         Batch size:      {batch_size}
         Learning rate:   {learning_rate}
-        Training size:   {n_train}
-        Validation size: {n_val}
+        Training size:   {len(train_dataset)}
+        Validation size: {len(val_dataset)}
         Checkpoints:     {save_checkpoint}
         Device:          {device.type}
         Images scaling:  {img_scale}
         Mixed Precision: {amp}
-    ''')
+        '''
+    )
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
     optimizer = optim.RMSprop(model.parameters(),
@@ -82,10 +108,11 @@ def train_model(
     global_step = 0
 
     # 5. Begin training
+    best_score = 0.0
     for epoch in range(1, epochs + 1):
         model.train()
         epoch_loss = 0
-        with tqdm(total=n_train, desc=f'Epoch {epoch}/{epochs}', unit='img') as pbar:
+        with tqdm(total=len(train_dataset), desc=f'Epoch {epoch}/{epochs}', unit='img') as pbar:
             for batch in train_loader:
                 images, true_masks = batch['image'], batch['mask']
 
@@ -128,7 +155,7 @@ def train_model(
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
                 # Evaluation round
-                division_step = (n_train // (5 * batch_size))
+                division_step = (len(train_dataset) // (5 * batch_size))
                 if division_step > 0:
                     if global_step % division_step == 0:
                         histograms = {}
@@ -160,11 +187,13 @@ def train_model(
                             pass
 
         if save_checkpoint:
-            Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
-            state_dict = model.state_dict()
-            state_dict['mask_values'] = dataset.mask_values
-            torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
-            logging.info(f'Checkpoint {epoch} saved!')
+            if val_score > best_score:
+                best_score = val_score
+                torch.save(model.state_dict(), str(dir_checkpoint_best / 'model.pth'))
+                logging.info(f'Best checkpoint saved!')
+            else:
+                torch.save(model.state_dict(), str(dir_checkpoint_history / f'checkpoint_epoch{epoch}.pth'))
+                logging.info(f'Checkpoint {epoch} saved!')
 
 
 def get_args():
