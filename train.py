@@ -182,26 +182,18 @@ def train_model(
             scheduler.step(val_score)  # Assuming MIoU is used to adjust the learning rate
 
             logging.info('Validation Metrics:')
-            logging.info('PA: {:.4f}, CPA: {:.4f}, MPA: {:.4f}, IoU_0: {:.4f}, IoU_1: {:.4f}, IoU_2: {:.4f}, IoU_3: {:.4f}, MIoU: {:.4f}'.format(
-                metrics['PA'], metrics['CPA'], metrics['MPA'], metrics['IoU_0'], metrics['IoU_1'], metrics['IoU_2'], metrics['IoU_3'], metrics['MIoU']))
-            logging.info('Dice: {:.4f}, Precision: {:.4f}, Recall: {:.4f}, F1: {:.4f}'.format(
-                metrics['Dice'], metrics['Precision'].mean(), metrics['Recall'].mean(), metrics['F1'].mean()))
+            logging.info('IoU_0: {:.4f}, IoU_1: {:.4f}, IoU_2: {:.4f}, IoU_3: {:.4f}, MIoU: {:.4f}, Dice: {:.4f}'.format(
+                metrics['IoU_0'], metrics['IoU_1'], metrics['IoU_2'], metrics['IoU_3'], metrics['MIoU'], metrics['Dice']))
 
             try:
                 experiment.log({
                     'learning rate': optimizer.param_groups[0]['lr'],
-                    'validation PA': metrics['PA'],
-                    'validation CPA': metrics['CPA'],
-                    'validation MPA': metrics['MPA'],
                     'validation IoU_0': metrics['IoU_0'],
                     'validation IoU_1': metrics['IoU_1'],
                     'validation IoU_2': metrics['IoU_2'],
                     'validation IoU_3': metrics['IoU_3'],
                     'validation MIoU': metrics['MIoU'],
                     'validation Dice': metrics['Dice'],
-                    'validation Precision': metrics['Precision'].mean(),
-                    'validation Recall': metrics['Recall'].mean(),
-                    'validation F1': metrics['F1'].mean(),
                     'epoch': epoch,
                 })
             except:

@@ -1,8 +1,7 @@
 import torch
 import torch.nn.functional as F
-import numpy as np
 from tqdm import tqdm
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
+from sklearn.metrics import confusion_matrix
 from utils.dice_score import dice_coeff, multiclass_dice_coeff
 
 @torch.inference_mode()
@@ -11,8 +10,6 @@ def evaluate(net, dataloader, device, amp):
     num_val_batches = len(dataloader)
     
     # Initialize variables to store the results
-    total_correct = 0
-    total_pixels = 0
     conf_matrix_list = []
 
     dice_score = 0
@@ -45,41 +42,32 @@ def evaluate(net, dataloader, device, amp):
 
             # Compute other metrics
             mask_pred = mask_pred.argmax(dim=1)
-            conf_mat = confusion_matrix(mask_true.cpu().numpy().flatten(), mask_pred.cpu().numpy().flatten())
-            conf_matrix_list.append(conf_mat)
-            total_correct += (mask_pred == mask_true).sum().item()
-            total_pixels += mask_true.numel()
+
+            # Calculate confusion matrix on GPU
+            conf_mat = torch.zeros(net.n_classes, net.n_classes, device=device)
+            for t, p in zip(mask_true.view(-1), mask_pred.view(-1)):
+                conf_mat[t.long(), p.long()] += 1
+            conf_matrix_list.append(conf_mat.cpu())  # Move to CPU for averaging
 
     net.train()
 
     # Calculate IoU for each class
-    conf_matrix = np.mean(conf_matrix_list, axis=0) if conf_matrix_list else np.zeros((net.n_classes, net.n_classes))
+    conf_matrix = torch.mean(torch.stack(conf_matrix_list), dim=0) if conf_matrix_list else torch.zeros(net.n_classes, net.n_classes)
     class_iou = []
     for i in range(net.n_classes):
         intersection = conf_matrix[i, i]
-        union = np.sum(conf_matrix[i, :]) + np.sum(conf_matrix[:, i]) - intersection
+        union = conf_matrix[i].sum() + conf_matrix[:, i].sum() - intersection
         iou = intersection / union if union != 0 else 0
         class_iou.append(iou)
 
     # Calculate overall metrics
-    accuracy = total_correct / total_pixels
-    precision = precision_score(mask_true.cpu().numpy().flatten(), mask_pred.cpu().numpy().flatten(), average=None)
-    recall = recall_score(mask_true.cpu().numpy().flatten(), mask_pred.cpu().numpy().flatten(), average=None)
-    f1 = f1_score(mask_true.cpu().numpy().flatten(), mask_pred.cpu().numpy().flatten(), average=None)
-    # Calculate mean IoU for classes 1 to 3
-    mean_iou_macro = np.mean([class_iou[i] for i in range(1, len(class_iou))])
+    mean_iou = torch.mean(torch.tensor(class_iou[1:])) if len(class_iou) > 1 else 0
 
     return {
-        'PA': accuracy,
-        'CPA': np.mean(conf_matrix.diagonal()) if net.n_classes > 1 else 0,
-        'MPA': np.mean(conf_matrix.flatten()),
         'IoU_0': class_iou[0] if net.n_classes > 0 else 0,
         'IoU_1': class_iou[1] if net.n_classes > 1 else 0,
         'IoU_2': class_iou[2] if net.n_classes > 2 else 0,
         'IoU_3': class_iou[3] if net.n_classes > 3 else 0,
-        'MIoU': mean_iou_macro,
+        'MIoU': mean_iou.item(),
         'Dice': dice_score / max(num_val_batches, 1),
-        'Precision': precision,
-        'Recall': recall,
-        'F1': f1
     }
