@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+from utils.dice_score import dice_coeff, multiclass_dice_coeff
 
 @torch.inference_mode()
 def evaluate(net, dataloader, device, amp):
@@ -25,8 +26,8 @@ def evaluate(net, dataloader, device, amp):
                 dice_score += multiclass_dice_coeff(mask_pred[:, 1:], mask_true[:, 1:], reduce_batch_first=False)
 
                 for i in range(net.n_classes):
-                    intersection = (mask_pred[:, i] * mask_true[:, i]).sum()
-                    union = mask_pred[:, i].sum() + mask_true[:, i].sum() - intersection
+                    intersection = (mask_pred[:, i] * mask_true[:, i]).sum().float()
+                    union = (mask_pred[:, i].sum() + mask_true[:, i].sum() - intersection).float()
                     if union != 0:
                         class_iou[i] += intersection / union
 
